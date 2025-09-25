@@ -51,11 +51,16 @@ const TestInterface = () => {
   };
 
   const submitTest = async (isAutoSubmit = false) => {
-    if (isSubmitting) return;
+    if (isSubmitting) {
+      console.log('Submission already in progress');
+      return;
+    }
     
+    console.log('Starting test submission...');
     setIsSubmitting(true);
 
     try {
+      // Prepare submission data
       const submissionData = {
         testId: test.id,
         studentId: user.id,
@@ -65,6 +70,9 @@ const TestInterface = () => {
         }))
       };
 
+      console.log('Submitting test with data:', submissionData);
+
+      // Make the API call
       const response = await fetch('http://localhost:5001/api/submit-test', {
         method: 'POST',
         headers: {
@@ -73,18 +81,50 @@ const TestInterface = () => {
         body: JSON.stringify(submissionData)
       });
 
-      const result = await response.json();
-
-      if (response.ok) {
-        alert(isAutoSubmit ? 'Test submitted automatically due to time limit!' : 'Test submitted successfully!');
-        navigate('/dashboard');
-      } else {
-        alert(result.error || 'Failed to submit test');
+      console.log('Received response status:', response.status);
+      
+      let result;
+      try {
+        result = await response.json();
+        console.log('Response data:', result);
+      } catch (jsonError) {
+        console.error('Error parsing JSON response:', jsonError);
+        throw new Error('Invalid response from server');
       }
+
+      if (!response.ok) {
+        console.error('Server responded with error:', result);
+        throw new Error(result.error || 'Failed to submit test');
+      }
+
+      // If we get here, submission was successful
+      const successMessage = isAutoSubmit 
+        ? 'Test submitted automatically due to time limit!' 
+        : 'Test submitted successfully!';
+      
+      console.log(successMessage);
+      alert(successMessage);
+      
+      // Redirect to dashboard
+      navigate('/dashboard');
+      
     } catch (error) {
-      console.error('Error submitting test:', error);
-      alert('Failed to submit test. Please try again.');
+      console.error('Error in submitTest:', error);
+      
+      // More specific error messages based on error type
+      let errorMessage = 'Failed to submit test. ';
+      
+      if (error.message.includes('Failed to fetch')) {
+        errorMessage += 'Could not connect to the server. Please check your internet connection.';
+      } else if (error.message.includes('Invalid response')) {
+        errorMessage += 'Received an invalid response from the server.';
+      } else {
+        errorMessage += error.message || 'Please try again.';
+      }
+      
+      alert(errorMessage);
     } finally {
+      console.log('Submission process completed');
       setIsSubmitting(false);
     }
   };

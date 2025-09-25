@@ -897,7 +897,7 @@ app.post('/api/submit-test', async (req, res) => {
     // Insert answers
     for (const answer of answers) {
       await connection.execute(
-        'INSERT INTO student_answers (submission_id, question_id, answer_text) VALUES (?, ?, ?)',
+        'INSERT INTO student_answers (submission_id, question_id, answer) VALUES (?, ?, ?)',
         [submissionId, answer.questionId, answer.answerText]
       );
     }
