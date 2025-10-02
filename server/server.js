@@ -1101,7 +1101,9 @@ app.post('/api/save-student-profile', async (req, res) => {
 
 // Save teacher profile endpoint
 app.post('/api/save-teacher-profile', async (req, res) => {
+  let connection;
   try {
+    connection = await pool.getConnection();
     console.log('Received teacher profile save request:', req.body);
     
     const {
@@ -1125,39 +1127,74 @@ app.post('/api/save-teacher-profile', async (req, res) => {
       return res.status(400).json({ error: 'Missing required fields: userId, firstName, lastName' });
     }
 
-    const connection = await pool.getConnection();
+    // Start a transaction
+    await connection.beginTransaction();
     
-    console.log('Executing database query with values:', [userId, firstName, lastName, dateOfBirth, phone, address, institution, department, qualification, experienceYears, specialization, bio]);
-    
-    // Insert or update teacher profile
-    const result = await connection.query(`
-      INSERT INTO teacher_profiles 
-      (user_id, first_name, last_name, date_of_birth, phone, address, institution, department, qualification, experience_years, specialization, bio)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-      ON DUPLICATE KEY UPDATE
-      first_name = VALUES(first_name),
-      last_name = VALUES(last_name),
-      date_of_birth = VALUES(date_of_birth),
-      phone = VALUES(phone),
-      address = VALUES(address),
-      institution = VALUES(institution),
-      department = VALUES(department),
-      qualification = VALUES(qualification),
-      experience_years = VALUES(experience_years),
-      specialization = VALUES(specialization),
-      bio = VALUES(bio),
-      updated_at = CURRENT_TIMESTAMP
-    `, [userId, firstName, lastName, dateOfBirth, phone, address, institution, department, qualification, experienceYears, specialization, bio]);
-    
-    console.log('Database query result:', result);
-    
-    connection.release();
-    res.json({ success: true, message: 'Teacher profile saved successfully' });
+    try {
+      // Format date to YYYY-MM-DD for MySQL
+      const formattedDateOfBirth = dateOfBirth ? new Date(dateOfBirth).toISOString().split('T')[0] : null;
+      
+      console.log('Executing database query with values:', [
+        userId, firstName, lastName, formattedDateOfBirth, phone, address, 
+        institution, department, qualification, experienceYears, specialization, bio
+      ]);
+      
+      // Insert or update teacher profile
+      const [result] = await connection.query(`
+        INSERT INTO teacher_profiles 
+        (user_id, first_name, last_name, date_of_birth, phone, address, institution, department, qualification, experience_years, specialization, bio)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ON DUPLICATE KEY UPDATE
+        first_name = VALUES(first_name),
+        last_name = VALUES(last_name),
+        date_of_birth = VALUES(date_of_birth),
+        phone = VALUES(phone),
+        address = VALUES(address),
+        institution = VALUES(institution),
+        department = VALUES(department),
+        qualification = VALUES(qualification),
+        experience_years = VALUES(experience_years),
+        specialization = VALUES(specialization),
+        bio = VALUES(bio),
+        updated_at = CURRENT_TIMESTAMP
+      `, [
+        userId, firstName, lastName, formattedDateOfBirth, phone, address, 
+        institution, department, qualification, experienceYears, specialization, bio
+      ]);
+      
+      // Commit the transaction
+      await connection.commit();
+      
+      console.log('Teacher profile saved successfully:', result);
+      
+      res.json({ 
+        success: true, 
+        message: 'Teacher profile saved successfully'
+      });
+    } catch (error) {
+      // Rollback the transaction in case of error
+      if (connection) {
+        await connection.rollback();
+      }
+      console.error('Transaction error saving teacher profile:', error);
+      throw error;
+    }
   } catch (error) {
     console.error('Error saving teacher profile:', error);
     console.error('Error details:', error.message);
     console.error('Error stack:', error.stack);
-    res.status(500).json({ error: 'Failed to save teacher profile', details: error.message });
+    res.status(500).json({ 
+      error: 'Failed to save teacher profile', 
+      details: process.env.NODE_ENV === 'development' ? error.message : 'An error occurred while saving the profile'
+    });
+  } finally {
+    if (connection) {
+      try {
+        await connection.release();
+      } catch (releaseError) {
+        console.error('Error releasing connection:', releaseError);
+      }
+    }
   }
 });
 
