@@ -984,8 +984,9 @@ app.delete('/api/delete-test/:testId', async (req, res) => {
 
 // Save student profile endpoint
 app.post('/api/save-student-profile', async (req, res) => {
-  const connection = await pool.getConnection();
+  let connection;
   try {
+    connection = await pool.getConnection();
     console.log('Received student profile save request:', req.body);
     
     const {
@@ -1008,38 +1009,43 @@ app.post('/api/save-student-profile', async (req, res) => {
       return res.status(400).json({ error: 'Missing required fields: userId, firstName, lastName' });
     }
 
-    // Validate email format if provided
-    if (email) {
-      const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
-      if (!emailRegex.test(email)) {
-        return res.status(400).json({ error: 'Invalid email format' });
-      }
-
-      // Check if email already exists for another user
-      const [existingEmail] = await connection.execute(
-        'SELECT id FROM users WHERE email = ? AND id != ?',
-        [email, userId]
-      );
-
-      if (existingEmail.length > 0) {
-        return res.status(400).json({ error: 'Email already in use by another account' });
-      }
-
-      // Update email in users table
-      await connection.execute(
-        'UPDATE users SET email = ? WHERE id = ?',
-        [email, userId]
-      );
-    }
-
-    console.log('Executing database query with values:', [userId, firstName, lastName, dateOfBirth, phone, address, schoolCollege, gradeYear, interests, goals]);
-    
     // Start a transaction
     await connection.beginTransaction();
     
     try {
+      // Validate email format if provided
+      if (email) {
+        const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+        if (!emailRegex.test(email)) {
+          await connection.rollback();
+          return res.status(400).json({ error: 'Invalid email format' });
+        }
+
+        // Check if email already exists for another user
+        const [existingEmail] = await connection.execute(
+          'SELECT id FROM users WHERE email = ? AND id != ?',
+          [email, userId]
+        );
+
+        if (existingEmail.length > 0) {
+          await connection.rollback();
+          return res.status(400).json({ error: 'Email already in use by another account' });
+        }
+
+        // Update email in users table
+        await connection.execute(
+          'UPDATE users SET email = ? WHERE id = ?',
+          [email, userId]
+        );
+      }
+
+      // Format date to YYYY-MM-DD for MySQL
+      const formattedDateOfBirth = dateOfBirth ? new Date(dateOfBirth).toISOString().split('T')[0] : null;
+      
+      console.log('Executing database query with values:', [userId, firstName, lastName, formattedDateOfBirth, phone, address, schoolCollege, gradeYear, interests, goals]);
+      
       // Insert or update student profile
-      const result = await connection.query(`
+      const [result] = await connection.query(`
         INSERT INTO student_profiles 
         (user_id, first_name, last_name, date_of_birth, phone, address, school_college, grade_year, interests, goals)
         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
@@ -1054,12 +1060,12 @@ app.post('/api/save-student-profile', async (req, res) => {
         interests = VALUES(interests),
         goals = VALUES(goals),
         updated_at = CURRENT_TIMESTAMP
-      `, [userId, firstName, lastName, dateOfBirth, phone, address, schoolCollege, gradeYear, interests, goals]);
+      `, [userId, firstName, lastName, formattedDateOfBirth, phone, address, schoolCollege, gradeYear, interests, goals]);
       
       // Commit the transaction
       await connection.commit();
-    
-      console.log('Database query result:', result);
+      
+      console.log('Profile saved successfully:', result);
       
       res.json({ 
         success: true, 
@@ -1068,7 +1074,10 @@ app.post('/api/save-student-profile', async (req, res) => {
       });
     } catch (error) {
       // Rollback the transaction in case of error
-      await connection.rollback();
+      if (connection) {
+        await connection.rollback();
+      }
+      console.error('Transaction error saving student profile:', error);
       throw error;
     }
   } catch (error) {
@@ -1077,10 +1086,16 @@ app.post('/api/save-student-profile', async (req, res) => {
     console.error('Error stack:', error.stack);
     res.status(500).json({ 
       error: 'Failed to save student profile', 
-      details: error.message 
+      details: process.env.NODE_ENV === 'development' ? error.message : 'An error occurred while saving the profile'
     });
   } finally {
-    connection.release();
+    if (connection) {
+      try {
+        await connection.release();
+      } catch (releaseError) {
+        console.error('Error releasing connection:', releaseError);
+      }
+    }
   }
 });
 
